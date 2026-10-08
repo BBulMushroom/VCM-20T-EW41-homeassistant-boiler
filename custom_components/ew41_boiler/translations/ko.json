@@ -1,0 +1,43 @@
+{
+  "title": "EW41 Boiler",
+  "config": {
+    "step": {
+      "user": {
+        "title": "EW41 보일러",
+        "description": "EW41에 연결합니다. 온도 범위는 실제 온도조절기에 맞게 선택하세요.",
+        "data": {
+          "host": "EW41 IP 주소",
+          "port": "TCP 포트",
+          "timeout": "응답 대기 시간 (초)",
+          "scan_interval": "상태 조회 간격 (초)",
+          "min_temperature": "HA에서 선택할 최저 온도 (℃)",
+          "max_temperature": "HA에서 선택할 최고 온도 (℃)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "정상 상태 응답을 받지 못했습니다. IP, 포트, 네트워크 연결을 확인하세요.",
+      "invalid_temperature_range": "최저 온도는 최고 온도보다 낮아야 하며 0.5℃ 단위여야 합니다."
+    },
+    "abort": {
+      "already_configured": "이미 등록된 EW41 주소입니다."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "EW41 보일러",
+        "description": "EW41에 연결합니다. 온도 범위는 실제 온도조절기에 맞게 선택하세요.",
+        "data": {
+          "timeout": "응답 대기 시간 (초)",
+          "scan_interval": "상태 조회 간격 (초)",
+          "min_temperature": "HA에서 선택할 최저 온도 (℃)",
+          "max_temperature": "HA에서 선택할 최고 온도 (℃)"
+        }
+      }
+    },
+    "error": {
+      "invalid_temperature_range": "최저 온도는 최고 온도보다 낮아야 하며 0.5℃ 단위여야 합니다."
+    }
+  }
+}
