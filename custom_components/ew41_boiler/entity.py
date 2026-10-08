@@ -16,7 +16,7 @@ class EW41Entity(CoordinatorEntity):
             "identifiers": {(DOMAIN, coordinator.device_id)},
             "name": "EW41 보일러",
             "model": "EW41 TCP boiler bridge",
-            "sw_version": "0.1.0",
+            "sw_version": "0.1.1",
         }
 
     @property

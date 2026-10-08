@@ -20,6 +20,41 @@ CAPTURES = (
 )
 
 class ProtocolTests(unittest.TestCase):
+    def test_physical_main_mode_queries_and_ack_have_different_encodings(self):
+        cases = (
+            ("F7 36 0F 81 0D 00 0F 00 00 00 14 98 14 19 14 97 14 97 CC D4", p.OperatingMode.HEATING_HOTWATER, 0),
+            ("F7 36 0F 81 0D 00 0E 00 00 01 14 98 14 19 14 97 14 97 CC D4", p.OperatingMode.HOTWATER_ONLY, 1),
+            ("F7 36 11 C7 0D 00 0E 00 00 01 14 98 14 19 14 97 14 97 94 E4", p.OperatingMode.HEATING_HOTWATER, 1),
+            ("F7 36 11 C7 0D 00 0E 00 00 0F 14 98 14 19 14 97 14 97 9A F8", p.OperatingMode.HOTWATER_ONLY, 15),
+        )
+        for raw, mode, value in cases:
+            with self.subTest(raw=raw):
+                status = p.BoilerStatus.from_response(bytes.fromhex(raw))
+                self.assertEqual(status.mode, mode)
+                self.assertEqual(status.mode_value, value)
+
+    def test_main_hotwater_ack_is_verified_against_query_value_one(self):
+        ack = bytes.fromhex("F7 36 11 C7 0D 00 0E 00 00 0F 14 98 14 19 14 97 14 97 9A F8")
+        query = p.BoilerStatus.from_response(bytes.fromhex("F7 36 0F 81 0D 00 0E 00 00 01 14 98 14 19 14 97 14 97 CC D4"))
+        with patch.object(p.EW41Client, "_send", return_value=ack) as send, patch.object(p.EW41Client, "get_status", return_value=query), patch.object(p.time, "sleep"):
+            result = p.EW41Client().set_hotwater_only()
+            self.assertTrue(result.success)
+            self.assertEqual(result.status.mode_label, "온수전용")
+            send.assert_called_once_with(bytes.fromhex("F7 36 11 47 01 01 97 1E"), p.MODE_HEADER)
+
+    def test_heating_mode_restores_main_heating_and_verifies_zero(self):
+        ack = bytes.fromhex("F7 36 11 C7 0D 00 0E 00 00 01 14 98 14 19 14 97 14 97 94 E4")
+        with patch.object(p.EW41Client, "_send", return_value=ack) as send, patch.object(p.EW41Client, "get_status", return_value=p.BoilerStatus.from_response(BASE)), patch.object(p.time, "sleep"):
+            result = p.EW41Client().set_heating_hotwater_mode()
+            self.assertTrue(result.success)
+            self.assertEqual(result.status.mode_label, "난방 + 온수")
+            self.assertEqual([call.args[0] for call in send.call_args_list], [bytes.fromhex("F7 36 11 47 01 00 96 1C"), bytes.fromhex("F7 36 11 43 01 01 93 16")])
+
+    def test_ack_without_applied_main_mode_remains_failure(self):
+        ack = bytes.fromhex("F7 36 11 C7 0D 00 0E 00 00 0F 14 98 14 19 14 97 14 97 9A F8")
+        with patch.object(p.EW41Client, "_send", return_value=ack), patch.object(p.EW41Client, "get_status", return_value=p.BoilerStatus.from_response(BASE)), patch.object(p.time, "sleep"):
+            self.assertFalse(p.EW41Client().set_hotwater_only().success)
+
     def test_native_reservation_packets_and_status_against_all_room_live_tests(self):
         packets = ("F7 36 11 46 01 01 96 1C", "F7 36 12 46 01 01 95 1C", "F7 36 13 46 01 01 94 1C", "F7 36 14 46 01 01 93 1C")
         for room, expected in zip(p.ROOM_ORDER, packets):

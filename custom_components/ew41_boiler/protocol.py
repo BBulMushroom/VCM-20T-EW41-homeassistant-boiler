@@ -118,6 +118,15 @@ class BoilerStatus:
 
     @property
     def mode(self) -> OperatingMode | None:
+        # Physical main-controller tests: status-query DATA4 uses 00/01,
+        # while the 0x47 acknowledgement uses the earlier confirmed 01/0F.
+        # Preserve the raw byte; these two frame types must not share a decoder.
+        if self.raw[:5] == STATUS_HEADER:
+            return {
+                0x00: OperatingMode.HEATING_HOTWATER,
+                0x01: OperatingMode.HOTWATER_ONLY,
+                0x0F: OperatingMode.HOTWATER_ONLY,
+            }.get(self.mode_value)
         try:
             return OperatingMode(self.mode_value)
         except ValueError:
@@ -408,7 +417,16 @@ class EW41Client:
                 warnings.append(f"운전모드 명령 통신/응답 확인 문제: {exc}")
             except EW41Error as exc:
                 errors.append(f"운전모드 명령 전송 실패: {exc}")
-            return self._verify(mode.label, lambda status: status.mode_value == mode.value,
+            if mode == OperatingMode.HEATING_HOTWATER and not errors:
+                # On this controller, 0x47 OFF acknowledges the request but does
+                # not restore normal heating. The verified main (living) 0x43 ON
+                # command returns query DATA4 to 00. Other rooms are untouched.
+                time.sleep(self.room_interval)
+                try:
+                    self._send(make_packet([0xF7, 0x36, 0x11, 0x43, 0x01, 0x01]))
+                except EW41Error as exc:
+                    errors.append(f"메인 조절기 난방 복귀 명령 전송 실패: {exc}")
+            return self._verify(mode.label, lambda status: status.mode == mode,
                                 errors, warnings, response)
 
     def set_hotwater_only(self) -> ControlResult:

@@ -1,4 +1,4 @@
-"""Global operating modes; preserve unknown values such as 0x00."""
+"""Main-controller operating modes, decoded from verified status queries."""
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.exceptions import HomeAssistantError

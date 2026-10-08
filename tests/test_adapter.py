@@ -205,11 +205,12 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.coordinator.client.set_temperature.assert_not_called()
 
     async def test_unknown_mode_is_not_assigned_a_known_mode(self):
+        self.coordinator.data = status(mode=0x55)
         select = EW41ModeSelect(self.coordinator)
         self.assertIsNone(select.current_option)
-        self.assertEqual(select.extra_state_attributes["raw_09"], "00")
+        self.assertEqual(select.extra_state_attributes["raw_09"], "55")
         sensor = EW41DiagnosticSensor(self.coordinator, "mode_label", "mode")
-        self.assertEqual(sensor.native_value, "알 수 없음 (0x00)")
+        self.assertEqual(sensor.native_value, "알 수 없음 (0x55)")
 
     async def test_mode_selection_calls_correct_verified_method(self):
         self.coordinator.client.set_hotwater_only.return_value = protocol.ControlResult(True, status(mode=15), "mode")
