@@ -1,0 +1,149 @@
+blueprint:
+  name: EW41 방별 HA 반복난방
+  description: >-
+    HA에서 방별 난방을 일정 간격으로 반복합니다. 켜면 즉시 첫 가동을 시작하고,
+    시작부터 시작까지의 간격마다 설정된 분 동안 난방합니다. 설정온도는 climate 값을
+    따릅니다. 선택한 방의 본체 예약은 해제합니다. HA 재시작 후 저장된 시작 시각으로
+    주기를 복구하며 매 분과 통신 복구 시 상태를 확인합니다. HA가 정지하거나 EW41과
+    통신할 수 없으면 난방을 끌 수 없습니다. 수동 난방은 반복난방 스위치를 끈 뒤 사용하세요.
+    자동화 자체를 비활성화하기 전에 반복난방 스위치를 꺼서 난방을 종료하세요.
+  domain: automation
+  homeassistant:
+    min_version: "2025.6.0"
+  input:
+    thermostat:
+      name: 방 온도조절기
+      selector:
+        entity:
+          filter:
+            integration: ew41_boiler
+            domain: climate
+    reservation:
+      name: 같은 방의 본체 예약난방 스위치
+      selector:
+        entity:
+          filter:
+            integration: ew41_boiler
+            domain: switch
+    enabled:
+      name: HA 반복난방 켜기/끄기 도우미
+      description: 별도로 만든 토글(input_boolean)을 선택하세요. 처음에는 OFF로 두세요.
+      selector:
+        entity:
+          filter:
+            domain: input_boolean
+    cycle_start:
+      name: 주기 시작 시각 도우미
+      description: 날짜와 시간을 모두 포함하는 input_datetime 도우미를 선택하세요.
+      selector:
+        entity:
+          filter:
+            domain: input_datetime
+    interval_hours:
+      name: 반복 간격 (가동 시작부터 다음 시작까지)
+      default: 2
+      selector:
+        number:
+          min: 1
+          max: 24
+          step: 1
+          unit_of_measurement: 시간
+          mode: box
+    run_minutes:
+      name: 한 번에 난방할 시간
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 59
+          step: 1
+          unit_of_measurement: 분
+          mode: box
+mode: queued
+max: 5
+max_exceeded: silent
+variables:
+  thermostat: !input thermostat
+  reservation: !input reservation
+  enabled: !input enabled
+  cycle_start: !input cycle_start
+  interval_hours: !input interval_hours
+  run_minutes: !input run_minutes
+triggers:
+  - trigger: state
+    entity_id: !input enabled
+    from: "off"
+    to: "on"
+    id: enable
+  - trigger: state
+    entity_id: !input enabled
+    from: "on"
+    to: "off"
+    id: disable
+  - trigger: time_pattern
+    minutes: "/1"
+    id: tick
+  - trigger: homeassistant
+    event: start
+    id: startup
+  - trigger: state
+    entity_id: !input thermostat
+    from: "unavailable"
+    id: recovery
+conditions:
+  - condition: template
+    value_template: >-
+      {{ is_state(enabled, 'on') or
+         (trigger is defined and trigger.id == 'disable') }}
+actions:
+  - if:
+      - condition: template
+        value_template: "{{ trigger is defined and trigger.id == 'enable' }}"
+    then:
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: !input cycle_start
+        data:
+          timestamp: "{{ (as_timestamp(now()) / 60) | int * 60 }}"
+  - condition: template
+    value_template: >-
+      {{ states(thermostat) in ['heat', 'off'] and
+         states(reservation) in ['on', 'off'] }}
+  - if:
+      - condition: template
+        value_template: "{{ is_state(reservation, 'on') }}"
+    then:
+      - action: switch.turn_off
+        target:
+          entity_id: !input reservation
+  - variables:
+      anchor: "{{ state_attr(cycle_start, 'timestamp') | float(0) }}"
+      period: "{{ (interval_hours | int) * 60 }}"
+  - if:
+      - condition: template
+        value_template: >-
+          {{ is_state(enabled, 'on') and
+             (anchor <= 0 or period <= 0 or run_minutes | int <= 0 or
+              run_minutes | int >= period) }}
+    then:
+      - action: climate.set_hvac_mode
+        target:
+          entity_id: !input thermostat
+        data:
+          hvac_mode: "off"
+      - stop: 주기 시작 시각, 반복 간격, 가동 시간을 확인하세요.
+        error: true
+  - variables:
+      desired: >-
+        {% set elapsed = ((as_timestamp(now()) - anchor) / 60) | int %}
+        {{ 'heat' if is_state(enabled, 'on') and elapsed >= 0 and
+           elapsed % period < run_minutes | int else 'off' }}
+  - if:
+      - condition: template
+        value_template: "{{ states(thermostat) != desired }}"
+    then:
+      - action: climate.set_hvac_mode
+        target:
+          entity_id: !input thermostat
+        data:
+          hvac_mode: "{{ desired }}"
