@@ -4,7 +4,7 @@ blueprint:
     HA에서 방별 난방을 일정 간격으로 반복합니다. 켜면 즉시 첫 가동을 시작하고,
     시작부터 시작까지의 간격마다 설정된 분 동안 난방합니다. 설정온도는 climate 값을
     따릅니다. 선택한 방의 본체 예약은 해제합니다. HA 재시작 후 저장된 시작 시각으로
-    주기를 복구하며 매 분과 통신 복구 시 상태를 확인합니다. HA가 정지하거나 EW41과
+    주기를 복구하며 10초마다 상태를 확인합니다. HA가 정지하거나 EW41과
     통신할 수 없으면 난방을 끌 수 없습니다. 수동 난방은 반복난방 스위치를 끈 뒤 사용하세요.
     자동화 자체를 비활성화하기 전에 반복난방 스위치를 꺼서 난방을 종료하세요.
   domain: automation
@@ -61,7 +61,7 @@ blueprint:
           mode: box
     interval_hours_helper:
       name: 대시보드에서 조절할 반복 주기 도우미 (선택)
-      description: 숫자 도우미를 연결하면 위 고정값 대신 도우미 값을 매 분 읽습니다. 1~24시간, 1시간 간격으로 만드세요.
+      description: 숫자 도우미를 연결하면 위 고정값 대신 도우미 값을 10초마다 읽습니다. 1~24시간, 1시간 간격으로 만드세요.
       default: ""
       selector:
         entity:
@@ -69,7 +69,7 @@ blueprint:
             domain: input_number
     run_minutes_helper:
       name: 대시보드에서 조절할 가동 시간 도우미 (선택)
-      description: 숫자 도우미를 연결하면 위 고정값 대신 도우미 값을 매 분 읽습니다. 1~59분, 1분 간격으로 만드세요.
+      description: 숫자 도우미를 연결하면 위 고정값 대신 도우미 값을 10초마다 읽습니다. 1~59분, 1분 간격으로 만드세요.
       default: ""
       selector:
         entity:
@@ -105,7 +105,7 @@ triggers:
     to: "off"
     id: disable
   - trigger: time_pattern
-    minutes: "/1"
+    seconds: "/10"
     id: tick
   - trigger: homeassistant
     event: start
@@ -128,7 +128,7 @@ actions:
         target:
           entity_id: !input cycle_start
         data:
-          timestamp: "{{ (as_timestamp(now()) / 60) | int * 60 }}"
+          timestamp: "{{ as_timestamp(now()) }}"
   - condition: template
     value_template: >-
       {{ states(thermostat) in ['heat', 'off'] and
