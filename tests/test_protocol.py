@@ -86,14 +86,48 @@ class ProtocolTests(unittest.TestCase):
                     if other != room:
                         self.assertEqual(result.status.target_temperature(other), 20)
 
-    def test_heating_uses_addresses_not_status_masks(self):
-        packets = ("F7 36 11 43 01 00 92 14", "F7 36 12 43 01 00 91 14", "F7 36 13 43 01 00 90 14", "F7 36 14 43 01 00 97 1C")
+    def test_power_off_uses_addresses_not_status_masks(self):
+        packets = ("F7 36 11 50 01 01 80 10", "F7 36 12 50 01 01 83 14", "F7 36 13 50 01 01 82 14", "F7 36 14 50 01 01 85 18")
         for room, expected in zip(p.ROOM_ORDER, packets):
             raw = bytearray(BASE[:-2])
             raw[6] = 15 ^ int(room)
             with self.subTest(room=room), patch.object(p.EW41Client, "_send") as send, patch.object(p.EW41Client, "get_status", return_value=p.BoilerStatus.from_response(p.make_packet(raw))), patch.object(p.time, "sleep"):
                 self.assertTrue(p.EW41Client().set_room(room, False).success)
                 send.assert_called_once_with(bytes.fromhex(expected))
+
+    def test_physical_room1_power_off_clears_away_without_changing_other_rooms(self):
+        before = p.BoilerStatus.from_response(bytes.fromhex("F7 36 0F 81 0D 00 00 0F 00 00 14 98 14 19 14 97 14 97 CC D4"))
+        after = p.BoilerStatus.from_response(bytes.fromhex("F7 36 0F 81 0D 00 00 0D 00 00 14 98 14 19 14 97 14 97 CE D4"))
+        self.assertFalse(before.is_off(p.Room.ROOM1))
+        self.assertTrue(before.is_away(p.Room.ROOM1))
+        self.assertTrue(after.is_off(p.Room.ROOM1))
+        self.assertFalse(after.is_away(p.Room.ROOM1))
+        for room in (p.Room.LIVING, p.Room.ROOM2, p.Room.ROOM3):
+            self.assertEqual(after.is_away(room), before.is_away(room))
+        self.assertEqual(after.raw[10:18], before.raw[10:18])
+
+    def test_heating_off_with_away_still_on_is_not_power_off_success(self):
+        away = p.BoilerStatus.from_response(bytes.fromhex("F7 36 0F 81 0D 00 00 0F 00 00 14 98 14 19 14 97 14 97 CC D4"))
+        with patch.object(p.EW41Client, "_send"), patch.object(p.EW41Client, "get_status", return_value=away), patch.object(p.time, "sleep"):
+            self.assertFalse(p.EW41Client().set_room(p.Room.ROOM1, False).success)
+            self.assertFalse(p.EW41Client().set_all_rooms(False).success)
+
+    def test_native_reservation_still_on_is_not_power_off_success(self):
+        raw = bytearray(BASE[:-2])
+        raw[6] = 0
+        raw[8] = int(p.Room.ROOM1)
+        reserved = p.BoilerStatus.from_response(p.make_packet(raw))
+        with patch.object(p.EW41Client, "_send"), patch.object(p.EW41Client, "get_status", return_value=reserved), patch.object(p.time, "sleep"):
+            self.assertFalse(p.EW41Client().set_room(p.Room.ROOM1, False).success)
+
+    def test_all_room_power_off_clears_all_three_mode_masks(self):
+        raw = bytearray(BASE[:-2])
+        raw[6:9] = bytes([0, 0, 0])
+        off = p.BoilerStatus.from_response(p.make_packet(raw))
+        with patch.object(p.EW41Client, "_send") as send, patch.object(p.EW41Client, "get_status", return_value=off), patch.object(p.time, "sleep"):
+            self.assertTrue(p.EW41Client().set_all_rooms(False).success)
+            self.assertEqual([call.args[0] for call in send.call_args_list],
+                             [bytes.fromhex(packet) for packet in ("F7 36 11 50 01 01 80 10", "F7 36 12 50 01 01 83 14", "F7 36 13 50 01 01 82 14", "F7 36 14 50 01 01 85 18")])
 
     def test_delayed_application_queries_again_without_repeating_write(self):
         changed = p.BoilerStatus.from_response(bytes.fromhex(CAPTURES[1][2]))

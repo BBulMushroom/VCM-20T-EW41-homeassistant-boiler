@@ -11,6 +11,8 @@ VCM-20T / NRM-20S에서 확인했습니다. 별도 서버나 MQTT가 필요하�
 - 방별 본체 예약과 HA 반복난방
 - 상태 새로고침과 RAW 진단
 
+난방 OFF는 외출이 아닌 조절기 전원 OFF입니다.
+
 ## 설치
 
 Home Assistant Core 2025.6 이상, HACS가 필요합니다.

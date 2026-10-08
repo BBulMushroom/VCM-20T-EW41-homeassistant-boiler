@@ -16,7 +16,7 @@ class EW41Entity(CoordinatorEntity):
             "identifiers": {(DOMAIN, coordinator.device_id)},
             "name": "EW41 보일러",
             "model": "EW41 TCP boiler bridge",
-            "sw_version": "0.1.2",
+            "sw_version": "0.1.3",
         }
 
     @property
@@ -24,4 +24,5 @@ class EW41Entity(CoordinatorEntity):
         if self.coordinator.data is None:
             return {}
         status = self.coordinator.data
-        return {"raw_06": f"{status.room_mask:02X}", "raw_09": f"{status.mode_value:02X}"}
+        return {"raw_06": f"{status.room_mask:02X}", "raw_07": f"{status.away_mask:02X}",
+                "raw_08": f"{status.reservation_mask:02X}", "raw_09": f"{status.mode_value:02X}"}

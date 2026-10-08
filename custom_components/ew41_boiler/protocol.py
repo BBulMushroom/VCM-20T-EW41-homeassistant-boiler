@@ -155,6 +155,18 @@ class BoilerStatus:
         return decode_temperature(self.raw[ROOM_TEMPERATURE_INDICES[_validate_room(room)] + 1])
 
     @property
+    def away_mask(self) -> int:
+        return self.raw[7]
+
+    def is_away(self, room: Room | int) -> bool:
+        return bool(self.away_mask & _validate_room(room).value)
+
+    def is_off(self, room: Room | int) -> bool:
+        """Power OFF clears heating, away and native reservation for this room."""
+        bit = _validate_room(room).value
+        return not ((self.room_mask | self.away_mask | self.reservation_mask) & bit)
+
+    @property
     def reservation_mask(self) -> int:
         """Index 8: source layout, with room1 bit verified by a physical reservation."""
         return self.raw[8]
@@ -174,11 +186,15 @@ class BoilerStatus:
             "room_mask": self.room_mask,
             "mode_value": self.mode_value,
             "raw_06": f"{self.room_mask:02X}",
+            "raw_07": f"{self.away_mask:02X}",
             "raw_09": f"{self.mode_value:02X}",
             "raw_hex": self.raw.hex(" ").upper(),
             "living_target_temperature_c": self.living_target_temperature,
             "living_current_temperature_c": self.living_current_temperature,
             "reservation_mask": self.reservation_mask,
+            "away_mask": self.away_mask,
+            "away_rooms": {room.name.lower(): self.is_away(room) for room in ROOM_ORDER},
+            "off_rooms": {room.name.lower(): self.is_off(room) for room in ROOM_ORDER},
             "reserved_rooms": {room.name.lower(): self.is_reserved(room) for room in ROOM_ORDER},
             "temperatures": {
                 room.name.lower(): {"target_c": self.target_temperature(room),
@@ -361,13 +377,17 @@ class EW41Client:
         _validate_on(on)
         with self._lock:
             errors: list[str] = []
-            packet = make_packet([0xF7, 0x36, ROOM_ADDRESSES[room], 0x43, 0x01, int(on)])
+            # 0x43 OFF enters away mode on this controller. The reference
+            # implementation's 0x50 / 01 switches off the physical display.
+            # Use normal heating ON (0x43 / 01), and actual power OFF (0x50 / 01).
+            packet = make_packet([0xF7, 0x36, ROOM_ADDRESSES[room],
+                                  0x43 if on else 0x50, 0x01, 0x01])
             try:
                 self._send(packet)
             except EW41Error as exc:
                 errors.append(f"{room.label} 명령 전송 실패: {exc}")
             return self._verify(f"{room.label} {'ON' if on else 'OFF'}",
-                                lambda status: status.is_on(room) == on, errors)
+                                lambda status: status.is_on(room) if on else status.is_off(room), errors)
 
     def set_all_rooms(self, on: bool) -> ControlResult:
         _validate_on(on)
@@ -376,15 +396,16 @@ class EW41Client:
             for index, room in enumerate(ROOM_ORDER):
                 if index:
                     time.sleep(self.room_interval)
-                packet = make_packet([0xF7, 0x36, ROOM_ADDRESSES[room], 0x43, 0x01, int(on)])
+                packet = make_packet([0xF7, 0x36, ROOM_ADDRESSES[room],
+                                      0x43 if on else 0x50, 0x01, 0x01])
                 try:
                     self._send(packet)
                 except EW41Error as exc:
                     # Continue with the remaining rooms; report partial failures.
                     errors.append(f"{room.label} 명령 전송 실패: {exc}")
-            target_mask = 0x0F if on else 0x00
             return self._verify(f"전체방 {'ON' if on else 'OFF'}",
-                                lambda status: status.room_mask == target_mask, errors)
+                                lambda status: status.room_mask == 0x0F if on else
+                                all(status.is_off(room) for room in ROOM_ORDER), errors)
 
     def set_reservation(self, room: Room | int, on: bool) -> ControlResult:
         """Native saved timer ON/OFF, verified on all four rooms (KS X 4506-9 7.12).
