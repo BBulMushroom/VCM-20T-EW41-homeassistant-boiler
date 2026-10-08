@@ -1,0 +1,13 @@
+"""Configuration and names for EW41 Boiler."""
+
+DOMAIN = "ew41_boiler"
+DEFAULT_HOST = "192.168.0.22"
+DEFAULT_PORT = 8899
+DEFAULT_TIMEOUT = 2.0
+DEFAULT_SCAN_INTERVAL = 10
+CONF_MIN_TEMP = "min_temperature"
+CONF_MAX_TEMP = "max_temperature"
+DEFAULT_MIN_TEMP = 10.0
+DEFAULT_MAX_TEMP = 30.0
+MODE_HEATING_HOTWATER = "난방 + 온수"
+MODE_HOTWATER_ONLY = "온수전용"

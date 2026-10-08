@@ -1,0 +1,43 @@
+{
+  "title": "EW41 Boiler",
+  "config": {
+    "step": {
+      "user": {
+        "title": "EW41 Boiler",
+        "description": "Connect to EW41. Choose temperature limits to match your physical thermostat.",
+        "data": {
+          "host": "EW41 IP address",
+          "port": "TCP port",
+          "timeout": "Response timeout (seconds)",
+          "scan_interval": "Status polling interval (seconds)",
+          "min_temperature": "Minimum temperature allowed in HA (°C)",
+          "max_temperature": "Maximum temperature allowed in HA (°C)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "No valid EW41 status response. Check IP address, port, and network access.",
+      "invalid_temperature_range": "Use a minimum lower than the maximum, in 0.5 °C steps."
+    },
+    "abort": {
+      "already_configured": "This EW41 address is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "EW41 Boiler",
+        "description": "Connect to EW41. Choose temperature limits to match your physical thermostat.",
+        "data": {
+          "timeout": "Response timeout (seconds)",
+          "scan_interval": "Status polling interval (seconds)",
+          "min_temperature": "Minimum temperature allowed in HA (°C)",
+          "max_temperature": "Maximum temperature allowed in HA (°C)"
+        }
+      }
+    },
+    "error": {
+      "invalid_temperature_range": "Use a minimum lower than the maximum, in 0.5 °C steps."
+    }
+  }
+}

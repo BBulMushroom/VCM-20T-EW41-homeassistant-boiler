@@ -1,0 +1,13 @@
+{
+  "domain": "ew41_boiler",
+  "name": "EW41 Boiler",
+  "codeowners": ["@BBulMushroom"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/BBulMushroom/VCM-20T-EW41-homeassistant-boiler",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/BBulMushroom/VCM-20T-EW41-homeassistant-boiler/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}
