@@ -59,6 +59,22 @@ blueprint:
           step: 1
           unit_of_measurement: 분
           mode: box
+    interval_hours_helper:
+      name: 대시보드에서 조절할 반복 주기 도우미 (선택)
+      description: 숫자 도우미를 연결하면 위 고정값 대신 도우미 값을 매 분 읽습니다. 1~24시간, 1시간 간격으로 만드세요.
+      default: ""
+      selector:
+        entity:
+          filter:
+            domain: input_number
+    run_minutes_helper:
+      name: 대시보드에서 조절할 가동 시간 도우미 (선택)
+      description: 숫자 도우미를 연결하면 위 고정값 대신 도우미 값을 매 분 읽습니다. 1~59분, 1분 간격으로 만드세요.
+      default: ""
+      selector:
+        entity:
+          filter:
+            domain: input_number
 mode: queued
 max: 5
 max_exceeded: silent
@@ -67,8 +83,16 @@ variables:
   reservation: !input reservation
   enabled: !input enabled
   cycle_start: !input cycle_start
-  interval_hours: !input interval_hours
-  run_minutes: !input run_minutes
+  fixed_interval_hours: !input interval_hours
+  fixed_run_minutes: !input run_minutes
+  interval_hours_helper: !input interval_hours_helper
+  run_minutes_helper: !input run_minutes_helper
+  interval_hours: >-
+    {{ states(interval_hours_helper) | int(0) if interval_hours_helper
+       else fixed_interval_hours | int }}
+  run_minutes: >-
+    {{ states(run_minutes_helper) | int(0) if run_minutes_helper
+       else fixed_run_minutes | int }}
 triggers:
   - trigger: state
     entity_id: !input enabled
@@ -123,7 +147,8 @@ actions:
       - condition: template
         value_template: >-
           {{ is_state(enabled, 'on') and
-             (anchor <= 0 or period <= 0 or run_minutes | int <= 0 or
+             (anchor <= 0 or interval_hours | int < 1 or interval_hours | int > 24 or
+              run_minutes | int < 1 or run_minutes | int > 59 or
               run_minutes | int >= period) }}
     then:
       - action: climate.set_hvac_mode
