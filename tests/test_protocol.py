@@ -20,6 +20,89 @@ CAPTURES = (
 )
 
 class ProtocolTests(unittest.TestCase):
+    def test_repeat_ignores_only_its_own_incidental_main_demand(self):
+        for owned in (False, True):
+            raw = bytearray(BASE[:-2])
+            raw[6:10] = bytes([3, 0, 0, 0])
+            before = p.BoilerStatus.from_response(p.make_packet(raw))
+            raw[6:8] = bytes([1, 2])
+            paused = p.BoilerStatus.from_response(p.make_packet(raw))
+            raw[6], raw[9] = 0, 1
+            water = p.BoilerStatus.from_response(p.make_packet(raw))
+            states = [before, paused, water, water] if owned else [before, paused, paused]
+            client = p.EW41Client()
+            client.repeat_main_owned = owned
+            with self.subTest(owned=owned), patch.object(client, '_send', return_value=b'ack') as send, patch.object(client, 'get_status', side_effect=states), patch.object(p.time, 'sleep'):
+                result = client.set_repeat_heating(p.Room.ROOM1, False)
+                self.assertTrue(result.success)
+                self.assertEqual(result.status.room_mask, 0 if owned else 1)
+                self.assertEqual([c.args[0][3] for c in send.call_args_list], [0x43, 0x47] if owned else [0x43])
+
+    def test_repeat_last_main_room_goes_directly_to_hotwater_only(self):
+        def state(mask, mode=0, away=0, reserved=0):
+            raw = bytearray(BASE[:-2])
+            raw[6:10] = bytes([mask, away, reserved, mode])
+            return p.BoilerStatus.from_response(p.make_packet(raw))
+        final = state(0, 1)
+        with patch.object(p.EW41Client, '_send', return_value=b'ack') as send, patch.object(p.EW41Client, 'get_status', side_effect=[state(1), final, final]), patch.object(p.time, 'sleep'):
+            result = p.EW41Client().set_repeat_heating(p.Room.LIVING, False)
+            self.assertTrue(result.success)
+            self.assertEqual(result.status.mode, p.OperatingMode.HOTWATER_ONLY)
+            self.assertEqual([c.args[0] for c in send.call_args_list], [bytes.fromhex('F7 36 11 47 01 01 97 1E')])
+
+    def test_repeat_keeps_other_rooms_heating_or_reserved(self):
+        for reserved in (False, True):
+            raw = bytearray(BASE[:-2])
+            raw[6:10] = bytes([2 if reserved else 6, 0, 4 if reserved else 0, 0])
+            before = p.BoilerStatus.from_response(p.make_packet(raw))
+            raw[6] &= ~2
+            raw[7] = 2
+            after = p.BoilerStatus.from_response(p.make_packet(raw))
+            with self.subTest(reserved=reserved), patch.object(p.EW41Client, '_send') as send, patch.object(p.EW41Client, 'get_status', side_effect=[before, after, after]), patch.object(p.time, 'sleep'):
+                result = p.EW41Client().set_repeat_heating(p.Room.ROOM1, False)
+                self.assertTrue(result.success)
+                send.assert_called_once_with(p.make_packet([0xF7, 0x36, 0x12, 0x43, 1, 0]))
+
+    def test_repeat_last_secondary_room_pauses_room_then_keeps_water(self):
+        raw = bytearray(BASE[:-2])
+        raw[6:10] = bytes([2, 0, 0, 0])
+        before = p.BoilerStatus.from_response(p.make_packet(raw))
+        raw[6:8] = bytes([0, 2])
+        paused = p.BoilerStatus.from_response(p.make_packet(raw))
+        raw[9] = 1
+        final = p.BoilerStatus.from_response(p.make_packet(raw))
+        with patch.object(p.EW41Client, '_send', return_value=b'ack') as send, patch.object(p.EW41Client, 'get_status', side_effect=[before, paused, final, final]), patch.object(p.time, 'sleep'):
+            self.assertTrue(p.EW41Client().set_repeat_heating(p.Room.ROOM1, False).success)
+            self.assertEqual([c.args[0][3] for c in send.call_args_list], [0x43, 0x47])
+            self.assertEqual(send.call_args_list[-1].args[0][5], 1)
+
+    def test_repeat_resume_does_not_leave_incidental_living_heating(self):
+        def state(mask, mode, away=0):
+            raw = bytearray(BASE[:-2])
+            raw[6:10] = bytes([mask, away, 0, mode])
+            return p.BoilerStatus.from_response(p.make_packet(raw))
+        final = state(2, 0, 1)
+        with patch.object(p.EW41Client, '_send', return_value=b'ack') as send, patch.object(p.EW41Client, 'get_status', side_effect=[state(0, 1), state(2, 1), state(3, 0), final, final]), patch.object(p.time, 'sleep'):
+            result = p.EW41Client().set_repeat_heating(p.Room.ROOM1, True)
+            self.assertTrue(result.success)
+            self.assertFalse(result.status.is_on(p.Room.LIVING))
+            self.assertEqual([(c.args[0][2], c.args[0][3], c.args[0][5]) for c in send.call_args_list], [(0x12, 0x43, 1), (0x11, 0x47, 0), (0x11, 0x43, 1), (0x11, 0x43, 0)])
+
+    def test_repeat_already_idle_sends_no_commands(self):
+        raw = bytearray(BASE[:-2])
+        raw[6:10] = bytes([0, 0, 0, 1])
+        final = p.BoilerStatus.from_response(p.make_packet(raw))
+        with patch.object(p.EW41Client, '_send') as send, patch.object(p.EW41Client, 'get_status', return_value=final), patch.object(p.time, 'sleep'):
+            self.assertTrue(p.EW41Client().set_repeat_heating(p.Room.ROOM1, False).success)
+            send.assert_not_called()
+
+    def test_repeat_water_mode_not_applied_is_failure(self):
+        raw = bytearray(BASE[:-2])
+        raw[6:10] = bytes([0, 1, 0, 0])
+        unchanged = p.BoilerStatus.from_response(p.make_packet(raw))
+        with patch.object(p.EW41Client, '_send', return_value=b'ack'), patch.object(p.EW41Client, 'get_status', return_value=unchanged), patch.object(p.time, 'sleep'):
+            self.assertFalse(p.EW41Client().set_repeat_heating(p.Room.LIVING, False).success)
+
     def test_repeat_pause_uses_away_instead_of_power_off_for_each_room(self):
         for room in p.ROOM_ORDER:
             raw = bytearray(BASE[:-2])

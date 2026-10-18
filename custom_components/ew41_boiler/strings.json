@@ -39,5 +39,17 @@
     "error": {
       "invalid_temperature_range": "Minimum must be below maximum, in 0.5°C steps."
     }
+  },
+  "services": {
+    "set_repeat_heating": {
+      "name": "Control repeat heating",
+      "description": "Run or pause room heating while keeping domestic hot water available.",
+      "fields": {
+        "on": {
+          "name": "Heating on",
+          "description": "Pause this room when off. Switch to hot-water-only when all rooms are idle."
+        }
+      }
+    }
   }
 }

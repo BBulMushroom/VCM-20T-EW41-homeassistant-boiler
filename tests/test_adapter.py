@@ -106,6 +106,12 @@ module("homeassistant.const", Platform=Platform, CONF_HOST="host", CONF_PORT="po
        UnitOfTemperature=SimpleNamespace(CELSIUS="°C"), EntityCategory=SimpleNamespace(DIAGNOSTIC="diagnostic"))
 module("homeassistant.exceptions", HomeAssistantError=HAError)
 module("homeassistant.helpers")
+module("homeassistant.helpers.config_validation", boolean=bool,
+       config_entry_only_config_schema=lambda domain: domain)
+entity_service_registration = Mock()
+module("homeassistant.helpers.service", async_register_platform_entity_service=entity_service_registration)
+module("homeassistant.helpers.storage", Store=lambda *args: SimpleNamespace(
+    async_load=AsyncMock(return_value=None), async_save=AsyncMock()))
 module("homeassistant.helpers.update_coordinator", DataUpdateCoordinator=Coordinator, CoordinatorEntity=CoordinatorEntity, UpdateFailed=UpdateFailed)
 module("homeassistant.components")
 module("homeassistant.components.climate", ClimateEntity=type("ClimateEntity", (), {}))
@@ -165,6 +171,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.coordinator = EW41Coordinator(self.hass, self.entry)
         self.coordinator.data = status()
         self.coordinator.client = Mock()
+        self.coordinator.client.repeat_main_owned = False
 
     async def test_climate_state_uses_actual_query(self):
         entity = EW41LivingClimate(self.coordinator)
@@ -174,6 +181,29 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.coordinator.data = status(mask=14, target=20)
         self.assertEqual(entity.hvac_mode, HVACMode.OFF)
         self.assertEqual(entity.target_temperature, 20)
+
+    async def test_repeat_entity_service_is_registered_and_separate_from_power(self):
+        entity_service_registration.reset_mock()
+        self.assertTrue(await integration.async_setup(self.hass, {}))
+        registration = entity_service_registration.call_args
+        self.assertEqual(registration.args[1:], ("ew41_boiler", "set_repeat_heating"))
+        self.assertEqual(registration.kwargs['entity_domain'], 'climate')
+        entity = EW41LivingClimate(self.coordinator)
+        self.coordinator.client.set_repeat_heating.return_value = protocol.ControlResult(True, status(mask=0, mode=1), "pause")
+        await entity.async_set_repeat_heating(False)
+        self.coordinator.client.set_repeat_heating.assert_called_once_with(protocol.Room.LIVING, False)
+        self.coordinator.client.set_room.assert_not_called()
+        self.assertTrue(entity.extra_state_attributes['repeat_pause_ready'])
+        self.assertEqual(entity.extra_state_attributes['operating_mode'], 'hotwater_only')
+
+    async def test_incidental_main_ownership_survives_restart_and_is_saved(self):
+        self.coordinator._repeat_store.async_load.return_value = {'main_owned': True}
+        await self.coordinator.async_initialize_repeat_state()
+        self.assertTrue(self.coordinator.client.repeat_main_owned)
+        self.coordinator.client.set_repeat_heating.return_value = protocol.ControlResult(True, status(mask=0, mode=1), 'pause')
+        self.coordinator.client.repeat_main_owned = False
+        await self.coordinator.async_control(self.coordinator.client.set_repeat_heating, protocol.Room.ROOM1, False)
+        self.coordinator._repeat_store.async_save.assert_awaited_with({'main_owned': False})
 
     async def test_temperature_success_publishes_verified_state(self):
         self.coordinator.client.set_temperature.return_value = protocol.ControlResult(True, status(target=22), "22")

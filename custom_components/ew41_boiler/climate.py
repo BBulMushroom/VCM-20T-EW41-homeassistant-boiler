@@ -55,6 +55,19 @@ class EW41RoomClimate(EW41Entity, ClimateEntity):
     # hvac_action is deliberately absent: the protocol does not confirm flame/pump activity.
 
     @property
+    def extra_state_attributes(self):
+        attributes = super().extra_state_attributes
+        status = self.coordinator.data
+        if status is not None:
+            attributes["repeat_pause_ready"] = status.repeat_pause_ready(
+                self.room, self.coordinator.client.repeat_main_owned)
+            attributes["operating_mode"] = status.mode.name.lower() if status.mode is not None else "unknown"
+        return attributes
+
+    async def async_set_repeat_heating(self, on):
+        await self.coordinator.async_control(self.coordinator.client.set_repeat_heating, self.room, on)
+
+    @property
     def preset_mode(self):
         status = self.coordinator.data
         if status is None:

@@ -1,0 +1,10 @@
+set_repeat_heating:
+  target:
+    entity:
+      domain: climate
+      integration: ew41_boiler
+  fields:
+    "on":
+      required: true
+      selector:
+        boolean:

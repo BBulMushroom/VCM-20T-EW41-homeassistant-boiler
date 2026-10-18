@@ -7,6 +7,7 @@ import logging
 from homeassistant.const import CONF_HOST, CONF_PORT, CONF_SCAN_INTERVAL, CONF_TIMEOUT
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.helpers.storage import Store
 
 from .const import DEFAULT_SCAN_INTERVAL, DEFAULT_TIMEOUT, DOMAIN
 from .protocol import EW41Client, EW41Error
@@ -24,11 +25,16 @@ class EW41Coordinator(DataUpdateCoordinator):
         )
         self.device_id = entry.unique_id or f"{self.client.host}:{self.client.port}"
         self._command_lock = asyncio.Lock()
+        self._repeat_store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.repeat")
         super().__init__(
             hass, _LOGGER, name=DOMAIN, config_entry=entry,
             update_interval=timedelta(seconds=self.settings.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)),
             always_update=False,
         )
+
+    async def async_initialize_repeat_state(self):
+        saved = await self._repeat_store.async_load()
+        self.client.repeat_main_owned = isinstance(saved, dict) and saved.get("main_owned") is True
 
     async def _async_update_data(self):
         async with self._command_lock:
@@ -44,6 +50,8 @@ class EW41Coordinator(DataUpdateCoordinator):
                 result = await self.hass.async_add_executor_job(method, *args)
             except (EW41Error, ValueError) as exc:
                 raise HomeAssistantError(str(exc)) from exc
+            finally:
+                await self._repeat_store.async_save({"main_owned": self.client.repeat_main_owned})
             for warning in result.warnings:
                 _LOGGER.warning("%s: %s", result.requested, warning)
             if result.status is not None:

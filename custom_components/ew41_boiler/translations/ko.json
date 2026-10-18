@@ -39,5 +39,17 @@
     "error": {
       "invalid_temperature_range": "최저 온도는 최고 온도보다 낮게, 0.5℃ 단위로 설정하세요."
     }
+  },
+  "services": {
+    "set_repeat_heating": {
+      "name": "반복난방 제어",
+      "description": "난방을 가동하거나 온수를 유지하며 대기합니다.",
+      "fields": {
+        "on": {
+          "name": "난방 가동",
+          "description": "끄면 해당 방의 난방을 멈춥니다. 모든 방이 쉬면 온수전용으로 전환합니다."
+        }
+      }
+    }
   }
 }

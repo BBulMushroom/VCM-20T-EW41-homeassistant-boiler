@@ -2,12 +2,13 @@ blueprint:
   name: EW41 방별 반복난방
   description: >-
     설정한 주기·시간 동안 방별 난방을 반복합니다. 켜면 즉시 시작하고, 끄면 종료합니다.
-    대기 중에는 전원을 끄지 않고 외출로 전환합니다. 통합 구성요소 0.1.4 이상이 필요합니다.
+    모든 방이 쉬면 온수전용으로 전환합니다. 자동화는 전원을 끄지 않습니다.
+    통합 구성요소 0.1.5 이상이 필요합니다.
     본체 예약은 자동 해제됩니다. 수동 제어·자동화 해제 전 반복난방을 끄세요.
     HA 정지·통신 장애 시 자동 종료가 안 됩니다.
   domain: automation
   homeassistant:
-    min_version: "2025.6.0"
+    min_version: "2026.1.0"
   input:
     thermostat:
       name: 방 온도조절기
@@ -150,11 +151,11 @@ actions:
               run_minutes | int < 1 or run_minutes | int > 59 or
               run_minutes | int >= period) }}
     then:
-      - action: climate.set_preset_mode
+      - action: ew41_boiler.set_repeat_heating
         target:
           entity_id: !input thermostat
         data:
-          preset_mode: "away"
+          "on": false
       - stop: 시작 시각·주기·가동 시간을 확인하세요.
         error: true
   - variables:
@@ -163,19 +164,21 @@ actions:
         {{ 'heat' if is_state(enabled, 'on') and elapsed >= 0 and
            elapsed % period < run_minutes | int else 'off' }}
   - choose:
-      - conditions: "{{ desired == 'heat' and not is_state(thermostat, 'heat') }}"
+      - conditions: >-
+          {{ desired == 'heat' and (not is_state(thermostat, 'heat') or
+             state_attr(thermostat, 'operating_mode') != 'heating_hotwater') }}
         sequence:
-          - action: climate.set_hvac_mode
+          - action: ew41_boiler.set_repeat_heating
             target:
               entity_id: !input thermostat
             data:
-              hvac_mode: "heat"
+              "on": true
       - conditions: >-
-          {{ desired == 'off' and state_attr(thermostat, 'preset_mode') != 'away'
+          {{ desired == 'off' and not state_attr(thermostat, 'repeat_pause_ready')
              and (is_state(enabled, 'on') or is_state(thermostat, 'heat')) }}
         sequence:
-          - action: climate.set_preset_mode
+          - action: ew41_boiler.set_repeat_heating
             target:
               entity_id: !input thermostat
             data:
-              preset_mode: "away"
+              "on": false

@@ -178,6 +178,15 @@ class BoilerStatus:
         room = _validate_room(room)
         return bool(self.room_mask & room.value)
 
+    def repeat_pause_ready(self, room: Room | int, ignore_main: bool = False) -> bool:
+        """No room demand; the last room also requires hot-water-only mode."""
+        room = _validate_room(room)
+        if self.is_on(room) or self.is_reserved(room):
+            return False
+        other = ((self.room_mask & (0x0E if ignore_main else 0x0F))
+                 | self.reservation_mask) & 0x0F
+        return bool(other) or self.mode == OperatingMode.HOTWATER_ONLY
+
     def to_dict(self) -> dict:
         return {
             "rooms": {room.name.lower(): self.is_on(room) for room in ROOM_ORDER},
@@ -284,6 +293,8 @@ class EW41Client:
         self.room_interval = room_interval
         self.settle_delay = settle_delay
         self._lock = threading.RLock()
+        self.repeat_main_owned = False
+        self._in_repeat_control = False
 
     def _receive_state(self, sock: socket.socket, header: bytes) -> bytes:
         # TCP recv() may contain a partial frame or several frames together.
@@ -372,6 +383,108 @@ class EW41Client:
             errors.append("최종 상태가 요청한 목표와 일치하지 않습니다.")
         return ControlResult(not errors, status, requested, tuple(errors), tuple(warnings or ()), command_response)
 
+    def set_repeat_heating(self, room: Room | int, on: bool) -> ControlResult:
+        with self._lock:
+            previous = self._in_repeat_control
+            self._in_repeat_control = True
+            try:
+                return self._set_repeat_heating(room, on)
+            finally:
+                self._in_repeat_control = previous
+
+    def _set_repeat_heating(self, room: Room | int, on: bool) -> ControlResult:
+        """Automatic heating never uses power OFF; keep domestic hot water available.
+
+        Read all rooms under the same lock before choosing the main mode. Other
+        rooms' normal heating and native reservation take priority over standby.
+        """
+        room = _validate_room(room)
+        _validate_on(on)
+        requested = f"{room.label} 반복난방 {'가동' if on else '대기'}"
+        with self._lock:
+            status = self.get_status()
+            if status.mode is None:
+                return ControlResult(False, status, requested, ("운전모드를 확인할 수 없습니다.",))
+            steps = []
+
+            def apply(result):
+                steps.append(result)
+                return result.status
+
+            if on:
+                main_was_heating = ((status.is_on(Room.LIVING) and not self.repeat_main_owned)
+                                    or status.is_reserved(Room.LIVING))
+                if room == Room.LIVING:
+                    self.repeat_main_owned = False
+                if not status.is_on(room):
+                    status = apply(self.set_room(room, True))
+                if not steps or steps[-1].success:
+                    if status.mode != OperatingMode.HEATING_HOTWATER:
+                        status = apply(self.set_heating_hotwater_mode())
+                        # Normal-mode restoration wakes the main/living room.
+                        # If it was idle, remove only that incidental demand.
+                        if steps[-1].success and room != Room.LIVING and not main_was_heating:
+                            self.repeat_main_owned = True
+                            status = apply(self._repeat_away(Room.LIVING))
+            else:
+                other_demand = (status.room_mask | status.reservation_mask) & (0x0F ^ int(room))
+                if self.repeat_main_owned and not status.is_reserved(Room.LIVING):
+                    other_demand &= ~int(Room.LIVING)
+                if room == Room.LIVING and not other_demand:
+                    # Main-controller water-only directly stops living heating.
+                    # Do not pass through away or power OFF here.
+                    if status.is_on(room) or status.is_reserved(room) or status.mode != OperatingMode.HOTWATER_ONLY:
+                        status = apply(self._repeat_hotwater_only())
+                else:
+                    if room == Room.LIVING:
+                        # Living's own run window has ended. Any main demand
+                        # needed by the remaining rooms belongs to automation.
+                        self.repeat_main_owned = True
+                    if status.is_on(room) or status.is_reserved(room):
+                        status = apply(self._repeat_away(room))
+                    if not steps or steps[-1].success:
+                        remaining = (status.room_mask | status.reservation_mask) & 0x0F
+                        if self.repeat_main_owned and not status.is_reserved(Room.LIVING):
+                            remaining &= ~int(Room.LIVING)
+                        if not remaining and (steps or status.mode != OperatingMode.HOTWATER_ONLY):
+                            status = apply(self._repeat_hotwater_only())
+            errors = [error for step in steps for error in step.errors]
+            warnings = [warning for step in steps for warning in step.warnings]
+            if errors or (steps and not steps[-1].success):
+                return ControlResult(False, status, requested, tuple(errors), tuple(warnings))
+            return self._verify(
+                requested,
+                lambda current: (current.is_on(room) and current.mode == OperatingMode.HEATING_HOTWATER)
+                if on else current.repeat_pause_ready(room, self.repeat_main_owned),
+                errors, warnings,
+            )
+
+    def _repeat_away(self, room: Room) -> ControlResult:
+        result = self.set_away(room)
+        if not result.success and result.status is not None:
+            time.sleep(0.5)
+            retried = self.set_away(room)
+            return ControlResult(retried.success, retried.status, retried.requested,
+                                 retried.errors, result.warnings + tuple(result.errors)
+                                 + retried.warnings, retried.command_response)
+        return result
+
+    def _repeat_hotwater_only(self) -> ControlResult:
+        result = self.set_hotwater_only()
+        # Live tests: the first mode write immediately after room pause can be
+        # acknowledged without applying. Retry once only after a valid query
+        # confirms every room is idle; never infer success from the ACK.
+        if (not result.success and result.status is not None
+                and not (((result.status.room_mask & (~1 if self.repeat_main_owned else 0x0F))
+                           | result.status.reservation_mask) & 0x0F)
+                and result.status.mode != OperatingMode.HOTWATER_ONLY):
+            time.sleep(0.5)
+            retried = self.set_hotwater_only()
+            return ControlResult(retried.success, retried.status, retried.requested,
+                                 retried.errors, result.warnings + tuple(result.errors)
+                                 + retried.warnings, retried.command_response)
+        return result
+
     def set_away(self, room: Room | int) -> ControlResult:
         """Pause room heating without the power-OFF command used by set_room."""
         room = _validate_room(room)
@@ -392,6 +505,8 @@ class EW41Client:
         room = _validate_room(room)
         _validate_on(on)
         with self._lock:
+            if room == Room.LIVING and not self._in_repeat_control:
+                self.repeat_main_owned = False
             errors: list[str] = []
             # 0x43 OFF enters away mode on this controller. The reference
             # implementation's 0x50 / 01 switches off the physical display.
@@ -408,6 +523,7 @@ class EW41Client:
     def set_all_rooms(self, on: bool) -> ControlResult:
         _validate_on(on)
         with self._lock:
+            self.repeat_main_owned = False
             errors: list[str] = []
             for index, room in enumerate(ROOM_ORDER):
                 if index:
@@ -467,9 +583,14 @@ class EW41Client:
                                 errors, warnings, response)
 
     def set_hotwater_only(self) -> ControlResult:
-        return self._set_mode(OperatingMode.HOTWATER_ONLY, 0x01)
+        result = self._set_mode(OperatingMode.HOTWATER_ONLY, 0x01)
+        if result.success:
+            self.repeat_main_owned = False
+        return result
 
     def set_heating_hotwater_mode(self) -> ControlResult:
+        if not self._in_repeat_control:
+            self.repeat_main_owned = False
         return self._set_mode(OperatingMode.HEATING_HOTWATER, 0x00)
 
     def set_living_temperature(self, temperature: float) -> ControlResult:
