@@ -20,6 +20,26 @@ CAPTURES = (
 )
 
 class ProtocolTests(unittest.TestCase):
+    def test_repeat_pause_uses_away_instead_of_power_off_for_each_room(self):
+        for room in p.ROOM_ORDER:
+            raw = bytearray(BASE[:-2])
+            raw[6] &= ~int(room)
+            raw[7] = int(room)
+            away = p.BoilerStatus.from_response(p.make_packet(raw))
+            with self.subTest(room=room), patch.object(p.EW41Client, "_send") as send, patch.object(p.EW41Client, "get_status", return_value=away), patch.object(p.time, "sleep"):
+                result = p.EW41Client().set_away(room)
+                self.assertTrue(result.success)
+                send.assert_called_once_with(p.make_packet([0xF7, 0x36, p.ROOM_ADDRESSES[room], 0x43, 1, 0]))
+                self.assertFalse(result.status.is_off(room))
+                self.assertEqual(result.status.raw[10:18], BASE[10:18])
+
+    def test_power_off_or_still_heating_is_not_successful_repeat_pause(self):
+        off = bytearray(BASE[:-2])
+        off[6] = 0
+        for state in (p.BoilerStatus.from_response(BASE), p.BoilerStatus.from_response(p.make_packet(off))):
+            with self.subTest(state=state), patch.object(p.EW41Client, "_send"), patch.object(p.EW41Client, "get_status", return_value=state), patch.object(p.time, "sleep"):
+                self.assertFalse(p.EW41Client().set_away(p.Room.LIVING).success)
+
     def test_physical_main_mode_queries_and_ack_have_different_encodings(self):
         cases = (
             ("F7 36 0F 81 0D 00 0F 00 00 00 14 98 14 19 14 97 14 97 CC D4", p.OperatingMode.HEATING_HOTWATER, 0),

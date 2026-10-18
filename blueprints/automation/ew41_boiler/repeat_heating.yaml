@@ -2,6 +2,7 @@ blueprint:
   name: EW41 방별 반복난방
   description: >-
     설정한 주기·시간 동안 방별 난방을 반복합니다. 켜면 즉시 시작하고, 끄면 종료합니다.
+    대기 중에는 전원을 끄지 않고 외출로 전환합니다. 통합 구성요소 0.1.4 이상이 필요합니다.
     본체 예약은 자동 해제됩니다. 수동 제어·자동화 해제 전 반복난방을 끄세요.
     HA 정지·통신 장애 시 자동 종료가 안 됩니다.
   domain: automation
@@ -149,11 +150,11 @@ actions:
               run_minutes | int < 1 or run_minutes | int > 59 or
               run_minutes | int >= period) }}
     then:
-      - action: climate.set_hvac_mode
+      - action: climate.set_preset_mode
         target:
           entity_id: !input thermostat
         data:
-          hvac_mode: "off"
+          preset_mode: "away"
       - stop: 시작 시각·주기·가동 시간을 확인하세요.
         error: true
   - variables:
@@ -161,12 +162,20 @@ actions:
         {% set elapsed = ((as_timestamp(now()) - anchor) / 60) | int %}
         {{ 'heat' if is_state(enabled, 'on') and elapsed >= 0 and
            elapsed % period < run_minutes | int else 'off' }}
-  - if:
-      - condition: template
-        value_template: "{{ states(thermostat) != desired }}"
-    then:
-      - action: climate.set_hvac_mode
-        target:
-          entity_id: !input thermostat
-        data:
-          hvac_mode: "{{ desired }}"
+  - choose:
+      - conditions: "{{ desired == 'heat' and not is_state(thermostat, 'heat') }}"
+        sequence:
+          - action: climate.set_hvac_mode
+            target:
+              entity_id: !input thermostat
+            data:
+              hvac_mode: "heat"
+      - conditions: >-
+          {{ desired == 'off' and state_attr(thermostat, 'preset_mode') != 'away'
+             and (is_state(enabled, 'on') or is_state(thermostat, 'heat')) }}
+        sequence:
+          - action: climate.set_preset_mode
+            target:
+              entity_id: !input thermostat
+            data:
+              preset_mode: "away"

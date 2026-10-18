@@ -85,6 +85,7 @@ class HVACMode(str, Enum):
 
 class Features(IntFlag):
     TARGET_TEMPERATURE = 1
+    PRESET_MODE = 16
     TURN_ON = 128
     TURN_OFF = 256
 
@@ -108,7 +109,8 @@ module("homeassistant.helpers")
 module("homeassistant.helpers.update_coordinator", DataUpdateCoordinator=Coordinator, CoordinatorEntity=CoordinatorEntity, UpdateFailed=UpdateFailed)
 module("homeassistant.components")
 module("homeassistant.components.climate", ClimateEntity=type("ClimateEntity", (), {}))
-module("homeassistant.components.climate.const", HVACMode=HVACMode, ClimateEntityFeature=Features)
+module("homeassistant.components.climate.const", HVACMode=HVACMode, ClimateEntityFeature=Features,
+       PRESET_AWAY="away", PRESET_NONE="none")
 for platform, name in (("switch", "SwitchEntity"), ("select", "SelectEntity"), ("sensor", "SensorEntity"), ("button", "ButtonEntity"), ("binary_sensor", "BinarySensorEntity")):
     module(f"homeassistant.components.{platform}", **{name: type(name, (), {})})
 # Schema construction is mocked. These tests do not claim voluptuous validation coverage.
@@ -179,6 +181,35 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         await entity.async_set_temperature(temperature=22)
         self.assertEqual(entity.target_temperature, 22)
         self.coordinator.client.set_temperature.assert_called_once_with(protocol.Room.LIVING, 22)
+
+    async def test_repeat_pause_is_separate_from_manual_power_off(self):
+        payload = bytearray(status(mask=14).raw[:-2])
+        payload[7] = 1
+        away = protocol.BoilerStatus.from_response(protocol.make_packet(payload))
+        entity = EW41LivingClimate(self.coordinator)
+        self.coordinator.client.set_away.return_value = protocol.ControlResult(True, away, "away")
+        await entity.async_set_preset_mode("away")
+        self.assertEqual(entity.preset_mode, "away")
+        self.assertEqual(entity.hvac_mode, HVACMode.OFF)
+        self.coordinator.client.set_away.assert_called_once_with(protocol.Room.LIVING)
+        self.coordinator.client.set_room.assert_not_called()
+
+        self.coordinator.client.set_room.return_value = protocol.ControlResult(True, status(), "on")
+        await entity.async_set_hvac_mode(HVACMode.HEAT)
+        self.assertEqual(entity.preset_mode, "none")
+        self.assertEqual(entity.hvac_mode, HVACMode.HEAT)
+        self.coordinator.client.set_room.assert_called_with(protocol.Room.LIVING, True)
+
+        self.coordinator.client.set_room.return_value = protocol.ControlResult(True, status(mask=14), "off")
+        await entity.async_turn_off()
+        self.coordinator.client.set_room.assert_called_with(protocol.Room.LIVING, False)
+        self.assertEqual(entity.preset_mode, "none")
+
+    async def test_invalid_preset_does_not_send_commands(self):
+        with self.assertRaises(HAError):
+            await EW41LivingClimate(self.coordinator).async_set_preset_mode("unsupported")
+        self.coordinator.client.set_away.assert_not_called()
+        self.coordinator.client.set_room.assert_not_called()
 
     async def test_target_mismatch_keeps_actual_temperature(self):
         self.coordinator.client.set_temperature.return_value = protocol.ControlResult(False, status(target=20), "22", ("target mismatch",))

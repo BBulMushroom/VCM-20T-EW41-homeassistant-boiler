@@ -372,6 +372,22 @@ class EW41Client:
             errors.append("최종 상태가 요청한 목표와 일치하지 않습니다.")
         return ControlResult(not errors, status, requested, tuple(errors), tuple(warnings or ()), command_response)
 
+    def set_away(self, room: Room | int) -> ControlResult:
+        """Pause room heating without the power-OFF command used by set_room."""
+        room = _validate_room(room)
+        with self._lock:
+            errors: list[str] = []
+            packet = make_packet([0xF7, 0x36, ROOM_ADDRESSES[room], 0x43, 0x01, 0x00])
+            try:
+                self._send(packet)
+            except EW41Error as exc:
+                errors.append(f"{room.label} 외출 명령 전송 실패: {exc}")
+            return self._verify(
+                f"{room.label} 외출",
+                lambda status: status.is_away(room) and not status.is_on(room)
+                and not status.is_reserved(room), errors,
+            )
+
     def set_room(self, room: Room | int, on: bool) -> ControlResult:
         room = _validate_room(room)
         _validate_on(on)

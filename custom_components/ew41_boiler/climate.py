@@ -1,7 +1,9 @@
 """Four climate entities backed by verified per-room command addresses."""
 
 from homeassistant.components.climate import ClimateEntity
-from homeassistant.components.climate.const import ClimateEntityFeature, HVACMode
+from homeassistant.components.climate.const import (
+    PRESET_AWAY, PRESET_NONE, ClimateEntityFeature, HVACMode,
+)
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.exceptions import HomeAssistantError
 
@@ -21,8 +23,10 @@ class EW41RoomClimate(EW41Entity, ClimateEntity):
     _attr_target_temperature_step = 0.5
     _attr_precision = 0.5
     _attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT]
+    _attr_preset_modes = [PRESET_NONE, PRESET_AWAY]
     _attr_supported_features = (
-        ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.TURN_ON | ClimateEntityFeature.TURN_OFF
+        ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.TURN_ON
+        | ClimateEntityFeature.TURN_OFF | ClimateEntityFeature.PRESET_MODE
     )
 
     def __init__(self, coordinator, room):
@@ -49,6 +53,21 @@ class EW41RoomClimate(EW41Entity, ClimateEntity):
         return HVACMode.HEAT if status.is_on(self.room) else HVACMode.OFF
 
     # hvac_action is deliberately absent: the protocol does not confirm flame/pump activity.
+
+    @property
+    def preset_mode(self):
+        status = self.coordinator.data
+        if status is None:
+            return None
+        return PRESET_AWAY if status.is_away(self.room) else PRESET_NONE
+
+    async def async_set_preset_mode(self, preset_mode):
+        if preset_mode == PRESET_AWAY:
+            await self.coordinator.async_control(self.coordinator.client.set_away, self.room)
+        elif preset_mode == PRESET_NONE:
+            await self.async_set_hvac_mode(HVACMode.HEAT)
+        else:
+            raise HomeAssistantError("일반 또는 외출 모드만 지원합니다.")
 
     async def async_set_temperature(self, **kwargs):
         temperature = kwargs.get(ATTR_TEMPERATURE)
