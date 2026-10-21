@@ -5,6 +5,7 @@ from homeassistant.exceptions import HomeAssistantError
 
 from .const import MODE_HEATING_HOTWATER, MODE_HOTWATER_ONLY
 from .entity import EW41Entity
+from .protocol import OperatingMode, Room
 
 PARALLEL_UPDATES = 0
 
@@ -14,7 +15,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
 
 class EW41ModeSelect(EW41Entity, SelectEntity):
-    _attr_options = [MODE_HEATING_HOTWATER, MODE_HOTWATER_ONLY]
+    _attr_options = ["꺼짐", MODE_HOTWATER_ONLY, MODE_HEATING_HOTWATER]
     _attr_icon = "mdi:water-boiler"
 
     def __init__(self, coordinator):
@@ -23,9 +24,23 @@ class EW41ModeSelect(EW41Entity, SelectEntity):
     @property
     def current_option(self):
         status = self.coordinator.data
-        return status.mode_label if status is not None and status.mode is not None else None
+        if status is None or status.mode is None:
+            return None
+        # Hot-water-only clears the living heating bit too. Check it before
+        # interpreting the room's three cleared bits as power OFF.
+        if status.mode == OperatingMode.HOTWATER_ONLY:
+            return MODE_HOTWATER_ONLY
+        if status.is_on(Room.LIVING):
+            return MODE_HEATING_HOTWATER
+        if status.is_off(Room.LIVING):
+            return "꺼짐"
+        # Away/native reservation are not any of these three choices.
+        return None
 
     async def async_select_option(self, option):
+        if option == "꺼짐":
+            await self.coordinator.async_control(self.coordinator.client.set_room, Room.LIVING, False)
+            return
         if option == MODE_HEATING_HOTWATER:
             method = self.coordinator.client.set_heating_hotwater_mode
         elif option == MODE_HOTWATER_ONLY:

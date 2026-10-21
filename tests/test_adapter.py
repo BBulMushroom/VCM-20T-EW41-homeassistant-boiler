@@ -280,6 +280,33 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(select.current_option, "온수전용")
         self.coordinator.client.set_hotwater_only.assert_called_once_with()
 
+    async def test_main_mode_select_uses_queried_state_not_other_room_demands(self):
+        select = EW41ModeSelect(self.coordinator)
+        for mask, mode, expected in ((2, 1, "온수전용"), (0, 15, "온수전용"),
+                                     (2, 0, "꺼짐"), (3, 0, "난방 + 온수"),
+                                     (0, 0x55, None)):
+            with self.subTest(mask=mask, mode=mode):
+                self.coordinator.data = status(mask=mask, mode=mode)
+                self.assertEqual(select.current_option, expected)
+        for index in (7, 8):
+            payload = bytearray(status(mask=2).raw[:-2])
+            payload[index] = 1
+            self.coordinator.data = protocol.BoilerStatus.from_response(protocol.make_packet(payload))
+            self.assertIsNone(select.current_option)
+        self.coordinator.data = None
+        self.assertIsNone(select.current_option)
+
+    async def test_main_mode_select_off_only_calls_living_power_off(self):
+        select = EW41ModeSelect(self.coordinator)
+        self.coordinator.client.set_room.return_value = protocol.ControlResult(True, status(mask=2), "off")
+        await select.async_select_option("꺼짐")
+        self.coordinator.client.set_room.assert_called_once_with(protocol.Room.LIVING, False)
+        self.coordinator.client.set_all_rooms.assert_not_called()
+        self.assertEqual(select.current_option, "꺼짐")
+        self.coordinator.client.set_heating_hotwater_mode.return_value = protocol.ControlResult(True, status(mask=3), "heat")
+        await select.async_select_option("난방 + 온수")
+        self.assertEqual(select.current_option, "난방 + 온수")
+
     async def test_room_and_all_switches(self):
         self.coordinator.data = status(mask=14)
         self.assertFalse(EW41RoomSwitch(self.coordinator, protocol.Room.LIVING).is_on)
