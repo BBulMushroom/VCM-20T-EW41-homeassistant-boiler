@@ -292,7 +292,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             payload = bytearray(status(mask=2).raw[:-2])
             payload[index] = 1
             self.coordinator.data = protocol.BoilerStatus.from_response(protocol.make_packet(payload))
-            self.assertIsNone(select.current_option)
+            self.assertEqual(select.current_option, "난방 + 온수")
         self.coordinator.data = None
         self.assertIsNone(select.current_option)
 

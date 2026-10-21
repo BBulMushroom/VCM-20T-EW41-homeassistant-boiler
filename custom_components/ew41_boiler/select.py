@@ -30,12 +30,11 @@ class EW41ModeSelect(EW41Entity, SelectEntity):
         # interpreting the room's three cleared bits as power OFF.
         if status.mode == OperatingMode.HOTWATER_ONLY:
             return MODE_HOTWATER_ONLY
-        if status.is_on(Room.LIVING):
-            return MODE_HEATING_HOTWATER
         if status.is_off(Room.LIVING):
             return "꺼짐"
-        # Away/native reservation are not any of these three choices.
-        return None
+        # Away/native reservation keep the main controller in normal mode.
+        # They describe room demand, not a third operating-mode byte value.
+        return MODE_HEATING_HOTWATER
 
     async def async_select_option(self, option):
         if option == "꺼짐":
