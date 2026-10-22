@@ -38,9 +38,28 @@ blueprint:
         entity:
           filter:
             domain: input_datetime
-    interval_hours:
+    interval_minutes:
       name: 반복 주기
-      description: 가동 시작부터 다음 시작까지의 간격입니다.
+      description: 가동 시작부터 다음 시작까지의 간격(분). 0이면 기존 시간 단위 설정을 사용합니다.
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 1440
+          step: 1
+          unit_of_measurement: 분
+          mode: box
+    interval_minutes_helper:
+      name: 주기 숫자 도우미 (분, 선택)
+      description: 1~1440분, 1분 단위. 연결하면 고정 주기보다 우선합니다. 주기는 가동 시간보다 길어야 합니다.
+      default: ""
+      selector:
+        entity:
+          filter:
+            domain: input_number
+    interval_hours:
+      name: 기존 반복 주기 (시간, 호환용)
+      description: 분 단위 주기와 도우미가 없을 때만 사용합니다.
       default: 2
       selector:
         number:
@@ -60,8 +79,8 @@ blueprint:
           unit_of_measurement: 분
           mode: box
     interval_hours_helper:
-      name: 주기 숫자 도우미 (선택)
-      description: 1~24시간, 1시간 단위. 연결하면 위 주기를 대체합니다.
+      name: 기존 주기 숫자 도우미 (시간, 호환용)
+      description: 분 단위 주기와 도우미가 없을 때만 사용합니다. 기존 1~24시간 도우미용입니다.
       default: ""
       selector:
         entity:
@@ -83,13 +102,21 @@ variables:
   reservation: !input reservation
   enabled: !input enabled
   cycle_start: !input cycle_start
+  fixed_interval_minutes: !input interval_minutes
   fixed_interval_hours: !input interval_hours
   fixed_run_minutes: !input run_minutes
   interval_hours_helper: !input interval_hours_helper
+  interval_minutes_helper: !input interval_minutes_helper
   run_minutes_helper: !input run_minutes_helper
-  interval_hours: >-
-    {{ states(interval_hours_helper) | int(0) if interval_hours_helper
-       else fixed_interval_hours | int }}
+  interval_minutes: >-
+    {% if interval_minutes_helper %}
+      {{ states(interval_minutes_helper) | int(0) }}
+    {% elif fixed_interval_minutes | int(0) != 0 %}
+      {{ fixed_interval_minutes | int(0) }}
+    {% else %}
+      {{ (states(interval_hours_helper) | int(0) if interval_hours_helper
+          else fixed_interval_hours | int(0)) * 60 }}
+    {% endif %}
   run_minutes: >-
     {{ states(run_minutes_helper) | int(0) if run_minutes_helper
        else fixed_run_minutes | int }}
@@ -142,12 +169,12 @@ actions:
           entity_id: !input reservation
   - variables:
       anchor: "{{ state_attr(cycle_start, 'timestamp') | float(0) }}"
-      period: "{{ (interval_hours | int) * 60 }}"
+      period: "{{ interval_minutes | int }}"
   - if:
       - condition: template
         value_template: >-
           {{ is_state(enabled, 'on') and
-             (anchor <= 0 or interval_hours | int < 1 or interval_hours | int > 24 or
+             (anchor <= 0 or interval_minutes | int < 1 or interval_minutes | int > 1440 or
               run_minutes | int < 1 or run_minutes | int > 59 or
               run_minutes | int >= period) }}
     then:
